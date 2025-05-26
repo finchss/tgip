@@ -36,6 +36,7 @@ func initMyIp(tg **Tgip) {
 	}
 }
 func SetTimeOut(timeout time.Duration) {
+	initMyIp(&myip)
 	initMutex.Lock()
 	defer initMutex.Unlock()
 	myip.timeout = timeout
