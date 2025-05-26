@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
-	"log"
 	"math/rand"
 	"net"
 	"net/http"
@@ -82,7 +81,7 @@ func GetMyIp() (string, error) {
 	for _, ip := range ips {
 		wg.Add(1)
 		go func(ipAddr string) {
-			log.Println("GET", ipAddr)
+
 			defer wg.Done()
 
 			req, err := http.NewRequestWithContext(ctx, "GET",
@@ -100,7 +99,6 @@ func GetMyIp() (string, error) {
 			defer resp.Body.Close()
 
 			if resp.StatusCode == http.StatusOK {
-				log.Println("OK", ipAddr)
 				body, err := io.ReadAll(resp.Body)
 				if err != nil {
 					return
