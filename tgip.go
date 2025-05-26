@@ -16,6 +16,7 @@ import (
 type Tgip struct {
 	addrs   []string
 	useHttp bool
+	timeout time.Duration
 }
 
 var (
@@ -34,12 +35,17 @@ func initMyIp(tg **Tgip) {
 		}
 	}
 }
-
+func SetTimeOut(timeout time.Duration) {
+	initMutex.Lock()
+	defer initMutex.Unlock()
+	myip.timeout = timeout
+}
 func GetMyIp() (string, error) {
 	initMyIp(&myip)
 
 	initMutex.Lock()
 	hasAddrs := len(myip.addrs) > 0
+	timeout := myip.timeout
 	initMutex.Unlock()
 
 	if !hasAddrs {
@@ -63,12 +69,13 @@ func GetMyIp() (string, error) {
 
 	client := &http.Client{
 		Transport: &http.Transport{
-			DisableKeepAlives: true,
+			TLSHandshakeTimeout: timeout,
+			DisableKeepAlives:   true,
 			TLSClientConfig: &tls.Config{
 				ServerName: "api.tgip.eu",
 			},
 		},
-		Timeout: 10 * time.Second,
+		Timeout: timeout,
 	}
 
 	for _, ip := range ips {
