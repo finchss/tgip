@@ -3,6 +3,7 @@ package tgip
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"io"
 	"math/rand"
@@ -12,10 +13,13 @@ import (
 	"time"
 )
 
+var RemoteIpService = "api.tgip.eu"
+
 type Tgip struct {
 	addrs   []string
 	useHttp bool
 	timeout time.Duration
+	host    string
 }
 
 var (
@@ -24,6 +28,10 @@ var (
 	initMutex sync.Mutex
 )
 
+type ipResponse struct {
+	IP string `json:"ip"`
+}
+
 func initMyIp(tg **Tgip) {
 	initMutex.Lock()
 	defer initMutex.Unlock()
@@ -31,33 +39,34 @@ func initMyIp(tg **Tgip) {
 	if *tg == nil {
 		*tg = &Tgip{
 			useHttp: true,
+			host:    RemoteIpService,
+			timeout: 10 * time.Second,
 		}
 	}
 }
+
 func SetTimeOut(timeout time.Duration) {
 	initMyIp(&myip)
 	initMutex.Lock()
 	defer initMutex.Unlock()
 	myip.timeout = timeout
 }
+
 func GetMyIp() (string, error) {
 	initMyIp(&myip)
 
+	var timeout time.Duration
 	initMutex.Lock()
-	hasAddrs := len(myip.addrs) > 0
-	timeout := myip.timeout
-	initMutex.Unlock()
-
-	if !hasAddrs {
-		addrs, lookupErr := net.LookupHost("api.tgip.eu")
+	if len(myip.addrs) == 0 {
+		addrs, lookupErr := net.LookupHost(myip.host)
 		if lookupErr != nil {
+			initMutex.Unlock()
 			return "", lookupErr
 		}
-
-		initMutex.Lock()
 		myip.addrs = addrs
-		initMutex.Unlock()
 	}
+	timeout = myip.timeout
+	initMutex.Unlock()
 
 	ips := GetRandomIps()
 
@@ -72,7 +81,7 @@ func GetMyIp() (string, error) {
 			TLSHandshakeTimeout: timeout,
 			DisableKeepAlives:   true,
 			TLSClientConfig: &tls.Config{
-				ServerName: "api.tgip.eu",
+				ServerName: myip.host,
 			},
 		},
 		Timeout: timeout,
@@ -81,7 +90,6 @@ func GetMyIp() (string, error) {
 	for _, ip := range ips {
 		wg.Add(1)
 		go func(ipAddr string) {
-
 			defer wg.Done()
 
 			req, err := http.NewRequestWithContext(ctx, "GET",
@@ -89,8 +97,7 @@ func GetMyIp() (string, error) {
 			if err != nil {
 				return
 			}
-
-			req.Host = "api.tgip.eu"
+			req.Host = myip.host
 
 			resp, err := client.Do(req)
 			if err != nil {
@@ -104,11 +111,15 @@ func GetMyIp() (string, error) {
 					return
 				}
 
+				var ipResp ipResponse
+				if err := json.Unmarshal(body, &ipResp); err != nil || ipResp.IP == "" {
+					return
+				}
+
 				select {
-				case resultChan <- string(body):
+				case resultChan <- ipResp.IP:
 					cancel()
 				case <-ctx.Done():
-					return
 				}
 			}
 		}(ip)
@@ -129,6 +140,7 @@ func GetMyIp() (string, error) {
 
 // GetRandomIps returns up to 3 randomly selected IP addresses
 func GetRandomIps() []string {
+	initMyIp(&myip)
 	initMutex.Lock()
 	defer initMutex.Unlock()
 
