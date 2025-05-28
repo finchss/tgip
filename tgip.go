@@ -3,7 +3,6 @@ package tgip
 import (
 	"context"
 	"crypto/tls"
-	"encoding/json"
 	"fmt"
 	"io"
 	"math/rand"
@@ -27,10 +26,6 @@ var (
 	rng       = rand.New(rand.NewSource(time.Now().UnixNano()))
 	initMutex sync.Mutex
 )
-
-type ipResponse struct {
-	IP string `json:"ip"`
-}
 
 func initMyIp(tg **Tgip) {
 	initMutex.Lock()
@@ -111,13 +106,8 @@ func GetMyIp() (string, error) {
 					return
 				}
 
-				var ipResp ipResponse
-				if err := json.Unmarshal(body, &ipResp); err != nil || ipResp.IP == "" {
-					return
-				}
-
 				select {
-				case resultChan <- ipResp.IP:
+				case resultChan <- string(body):
 					cancel()
 				case <-ctx.Done():
 				}
