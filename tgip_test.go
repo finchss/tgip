@@ -2,7 +2,6 @@ package tgip
 
 import (
 	"encoding/json"
-	"log"
 	"sync"
 	"testing"
 	"time"
@@ -10,16 +9,50 @@ import (
 
 func TestGetMyIp(t *testing.T) {
 	m, err := GetMyIp()
-	log.Println(m, err)
+	if err != nil {
+		t.Fatalf("First GetMyIp() failed: %v", err)
+	}
+	if m == "" {
+		t.Error("First GetMyIp() returned empty result")
+	}
+
 	m, err = GetMyIp()
-	log.Println(m, err)
+	if err != nil {
+		t.Fatalf("Second GetMyIp() failed: %v", err)
+	}
+	if m == "" {
+		t.Error("Second GetMyIp() returned empty result")
+	}
 }
 func TestGetMyIpWithApiIpifyOrg(t *testing.T) {
+	remoteIpServiceMutex.RLock()
+	originalService := RemoteIpService
+	remoteIpServiceMutex.RUnlock()
+
+	defer func() {
+		remoteIpServiceMutex.Lock()
+		RemoteIpService = originalService
+		remoteIpServiceMutex.Unlock()
+	}()
+
+	remoteIpServiceMutex.Lock()
 	RemoteIpService = "api.ipify.org"
+	remoteIpServiceMutex.Unlock()
 	m, err := GetMyIp()
-	log.Println(m, err)
+	if err != nil {
+		t.Fatalf("First GetMyIp() failed: %v", err)
+	}
+	if m == "" {
+		t.Error("First GetMyIp() returned empty result")
+	}
+
 	m, err = GetMyIp()
-	log.Println(m, err)
+	if err != nil {
+		t.Fatalf("Second GetMyIp() failed: %v", err)
+	}
+	if m == "" {
+		t.Error("Second GetMyIp() returned empty result")
+	}
 }
 
 func TestIfReplyFromApiTgipEuIsJson(t *testing.T) {
@@ -41,8 +74,19 @@ func TestIfReplyFromApiTgipEuIsJson(t *testing.T) {
 	}
 }
 func TestIfReplyFromApiIpifyOrg(t *testing.T) {
+	remoteIpServiceMutex.RLock()
+	originalService := RemoteIpService
+	remoteIpServiceMutex.RUnlock()
 
+	defer func() {
+		remoteIpServiceMutex.Lock()
+		RemoteIpService = originalService
+		remoteIpServiceMutex.Unlock()
+	}()
+
+	remoteIpServiceMutex.Lock()
 	RemoteIpService = "api.ipify.org"
+	remoteIpServiceMutex.Unlock()
 	response, err := GetMyIp()
 	if err != nil {
 		t.Errorf("Failed to get IP: %v", err)
@@ -60,7 +104,7 @@ func TestIfReplyFromApiIpifyOrg(t *testing.T) {
 	}
 }
 func TestConcurrentGetMyIp(t *testing.T) {
-	const goroutineCount = 50
+	const goroutineCount = 100
 
 	// Optional: Set a shorter timeout for test speed
 	SetTimeOut(5 * time.Second)

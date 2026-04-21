@@ -12,7 +12,10 @@ import (
 	"time"
 )
 
-var RemoteIpService = "api.tgip.eu"
+var (
+	RemoteIpService      = "api.tgip.eu"
+	remoteIpServiceMutex sync.RWMutex
+)
 
 type Tgip struct {
 	addrs   []string
@@ -25,6 +28,7 @@ var (
 	myip      *Tgip
 	rng       = rand.New(rand.NewSource(time.Now().UnixNano()))
 	initMutex sync.Mutex
+	rngMutex  sync.Mutex
 )
 
 func initMyIp(tg **Tgip) {
@@ -32,25 +36,62 @@ func initMyIp(tg **Tgip) {
 	defer initMutex.Unlock()
 
 	if *tg == nil {
+		remoteIpServiceMutex.RLock()
+		service := RemoteIpService
+		remoteIpServiceMutex.RUnlock()
+
 		*tg = &Tgip{
 			useHttp: true,
-			host:    RemoteIpService,
+			host:    service,
 			timeout: 10 * time.Second,
 		}
 	}
 }
 
 func SetTimeOut(timeout time.Duration) {
-	initMyIp(&myip)
 	initMutex.Lock()
 	defer initMutex.Unlock()
-	myip.timeout = timeout
+
+	if myip == nil {
+		remoteIpServiceMutex.RLock()
+		service := RemoteIpService
+		remoteIpServiceMutex.RUnlock()
+
+		myip = &Tgip{
+			useHttp: true,
+			host:    service,
+			timeout: timeout,
+		}
+	} else {
+		myip.timeout = timeout
+	}
+}
+
+func SetUseHttp(useHttp bool) {
+	initMutex.Lock()
+	defer initMutex.Unlock()
+
+	if myip == nil {
+		remoteIpServiceMutex.RLock()
+		service := RemoteIpService
+		remoteIpServiceMutex.RUnlock()
+
+		myip = &Tgip{
+			useHttp: useHttp,
+			host:    service,
+			timeout: 10 * time.Second,
+		}
+	} else {
+		myip.useHttp = useHttp
+	}
 }
 
 func GetMyIp() (string, error) {
 	initMyIp(&myip)
 
 	var timeout time.Duration
+	var useHttp bool
+	var host string
 	initMutex.Lock()
 	if len(myip.addrs) == 0 {
 		addrs, lookupErr := net.LookupHost(myip.host)
@@ -61,6 +102,8 @@ func GetMyIp() (string, error) {
 		myip.addrs = addrs
 	}
 	timeout = myip.timeout
+	useHttp = myip.useHttp
+	host = myip.host
 	initMutex.Unlock()
 
 	ips := GetRandomIps()
@@ -71,15 +114,20 @@ func GetMyIp() (string, error) {
 	resultChan := make(chan string, len(ips))
 	var wg sync.WaitGroup
 
+	transport := &http.Transport{
+		DisableKeepAlives: true,
+	}
+
+	if !useHttp {
+		transport.TLSHandshakeTimeout = timeout
+		transport.TLSClientConfig = &tls.Config{
+			ServerName: host,
+		}
+	}
+
 	client := &http.Client{
-		Transport: &http.Transport{
-			TLSHandshakeTimeout: timeout,
-			DisableKeepAlives:   true,
-			TLSClientConfig: &tls.Config{
-				ServerName: myip.host,
-			},
-		},
-		Timeout: timeout,
+		Transport: transport,
+		Timeout:   timeout,
 	}
 
 	for _, ip := range ips {
@@ -87,18 +135,28 @@ func GetMyIp() (string, error) {
 		go func(ipAddr string) {
 			defer wg.Done()
 
+			scheme := "https"
+			if useHttp {
+				scheme = "http"
+			}
+
 			req, err := http.NewRequestWithContext(ctx, "GET",
-				fmt.Sprintf("https://%s/?format=json", ipAddr), nil)
+				fmt.Sprintf("%s://%s/?format=json", scheme, ipAddr), nil)
 			if err != nil {
 				return
 			}
-			req.Host = myip.host
+			req.Host = host
 
 			resp, err := client.Do(req)
 			if err != nil {
 				return
 			}
-			defer resp.Body.Close()
+			defer func(Body io.ReadCloser) {
+				err := Body.Close()
+				if err != nil {
+					return
+				}
+			}(resp.Body)
 
 			if resp.StatusCode == http.StatusOK {
 				body, err := io.ReadAll(resp.Body)
@@ -132,13 +190,15 @@ func GetMyIp() (string, error) {
 func GetRandomIps() []string {
 	initMyIp(&myip)
 	initMutex.Lock()
-	defer initMutex.Unlock()
-
 	addrsCopy := append([]string(nil), myip.addrs...)
+	initMutex.Unlock()
+
 	if len(addrsCopy) > 3 {
+		rngMutex.Lock()
 		rng.Shuffle(len(addrsCopy), func(i, j int) {
 			addrsCopy[i], addrsCopy[j] = addrsCopy[j], addrsCopy[i]
 		})
+		rngMutex.Unlock()
 		addrsCopy = addrsCopy[:3]
 	}
 	return addrsCopy
