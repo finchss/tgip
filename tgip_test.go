@@ -113,7 +113,7 @@ func TestConcurrentGetMyIp(t *testing.T) {
 	results := make([]string, goroutineCount)
 	errors := make([]error, goroutineCount)
 
-	for i := 0; i < goroutineCount; i++ {
+	for i := range goroutineCount {
 		wg.Add(1)
 		go func(index int) {
 			defer wg.Done()
@@ -125,11 +125,26 @@ func TestConcurrentGetMyIp(t *testing.T) {
 
 	wg.Wait()
 
-	for i := 0; i < goroutineCount; i++ {
+	for i := range goroutineCount {
 		if errors[i] != nil {
 			t.Errorf("goroutine %d failed: %v", i, errors[i])
 		} else {
 			t.Logf("goroutine %d result: %s", i, results[i])
 		}
+	}
+}
+
+func TestDebug(t *testing.T) {
+	originalDebug := Debug
+	defer SetDebug(originalDebug)
+
+	SetDebug(true)
+	if !Debug {
+		t.Error("Debug should be true after SetDebug(true)")
+	}
+
+	SetDebug(false)
+	if Debug {
+		t.Error("Debug should be false after SetDebug(false)")
 	}
 }

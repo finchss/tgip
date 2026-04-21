@@ -5,9 +5,12 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
+	"log"
 	"math/rand"
 	"net"
 	"net/http"
+	"os"
+	"slices"
 	"sync"
 	"time"
 )
@@ -15,7 +18,24 @@ import (
 var (
 	RemoteIpService      = "api.tgip.eu"
 	remoteIpServiceMutex sync.RWMutex
+	Debug                bool
 )
+
+func init() {
+	if os.Getenv("TGIP_DEBUG") != "" {
+		Debug = true
+	}
+}
+
+func SetDebug(enabled bool) {
+	Debug = enabled
+}
+
+func debug(format string, v ...any) {
+	if Debug {
+		log.Printf("[TGIP] "+format, v...)
+	}
+}
 
 type Tgip struct {
 	addrs   []string
@@ -40,6 +60,7 @@ func initMyIp(tg **Tgip) {
 		service := RemoteIpService
 		remoteIpServiceMutex.RUnlock()
 
+		debug("Initializing Tgip with host: %s", service)
 		*tg = &Tgip{
 			useHttp: true,
 			host:    service,
@@ -49,6 +70,7 @@ func initMyIp(tg **Tgip) {
 }
 
 func SetTimeOut(timeout time.Duration) {
+	debug("Setting timeout to %v", timeout)
 	initMutex.Lock()
 	defer initMutex.Unlock()
 
@@ -68,6 +90,7 @@ func SetTimeOut(timeout time.Duration) {
 }
 
 func SetUseHttp(useHttp bool) {
+	debug("Setting useHttp to %v", useHttp)
 	initMutex.Lock()
 	defer initMutex.Unlock()
 
@@ -94,12 +117,15 @@ func GetMyIp() (string, error) {
 	var host string
 	initMutex.Lock()
 	if len(myip.addrs) == 0 {
+		debug("Looking up host: %s", myip.host)
 		addrs, lookupErr := net.LookupHost(myip.host)
 		if lookupErr != nil {
 			initMutex.Unlock()
+			debug("Host lookup failed: %v", lookupErr)
 			return "", lookupErr
 		}
 		myip.addrs = addrs
+		debug("Found IPs for %s: %v", myip.host, addrs)
 	}
 	timeout = myip.timeout
 	useHttp = myip.useHttp
@@ -107,6 +133,7 @@ func GetMyIp() (string, error) {
 	initMutex.Unlock()
 
 	ips := GetRandomIps()
+	debug("Trying IPs: %v", ips)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -140,17 +167,21 @@ func GetMyIp() (string, error) {
 				scheme = "http"
 			}
 
-			req, err := http.NewRequestWithContext(ctx, "GET",
-				fmt.Sprintf("%s://%s/?format=json", scheme, ipAddr), nil)
+			url := fmt.Sprintf("%s://%s/?format=json", scheme, ipAddr)
+			debug("Requesting: %s (Host: %s)", url, host)
+			req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 			if err != nil {
+				debug("Failed to create request for %s: %v", ipAddr, err)
 				return
 			}
 			req.Host = host
 
 			resp, err := client.Do(req)
 			if err != nil {
+				debug("Request to %s failed: %v", ipAddr, err)
 				return
 			}
+			debug("Response from %s: %d", ipAddr, resp.StatusCode)
 			defer func(Body io.ReadCloser) {
 				err := Body.Close()
 				if err != nil {
@@ -161,25 +192,32 @@ func GetMyIp() (string, error) {
 			if resp.StatusCode == http.StatusOK {
 				body, err := io.ReadAll(resp.Body)
 				if err != nil {
+					debug("Failed to read body from %s: %v", ipAddr, err)
 					return
 				}
 
 				select {
 				case resultChan <- string(body):
+					debug("Success from %s: %s", ipAddr, string(body))
 					cancel()
 				case <-ctx.Done():
+					debug("Context done, ignoring result from %s", ipAddr)
 				}
+			} else {
+				debug("Non-OK response from %s: %d", ipAddr, resp.StatusCode)
 			}
 		}(ip)
 	}
 
 	go func() {
 		wg.Wait()
+		debug("All requests finished")
 		close(resultChan)
 	}()
 
 	result, ok := <-resultChan
 	if !ok {
+		debug("No successful response from any IP")
 		return "", fmt.Errorf("no successful response from any IP")
 	}
 
@@ -190,8 +228,10 @@ func GetMyIp() (string, error) {
 func GetRandomIps() []string {
 	initMyIp(&myip)
 	initMutex.Lock()
-	addrsCopy := append([]string(nil), myip.addrs...)
+	addrsCopy := slices.Clone(myip.addrs)
 	initMutex.Unlock()
+
+	debug("Available IPs: %v", addrsCopy)
 
 	if len(addrsCopy) > 3 {
 		rngMutex.Lock()
@@ -200,6 +240,7 @@ func GetRandomIps() []string {
 		})
 		rngMutex.Unlock()
 		addrsCopy = addrsCopy[:3]
+		debug("Selected 3 random IPs: %v", addrsCopy)
 	}
 	return addrsCopy
 }
